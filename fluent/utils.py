@@ -147,3 +147,17 @@ def args_match(function_name, args, kwargs, arg_spec):
                 )
 
     return (True, None)
+
+
+def add_message_and_attrs_to_store(store, name, item, attribute=False):
+    store[name] = item
+    if not attribute:
+        for attr in item.attributes:
+            add_message_and_attrs_to_store(store,
+                                           message_id_for_attr(name, attr.id.name),
+                                           attr,
+                                           attribute=True)
+
+
+def message_id_for_attr(parent_msg_id, attr_name):
+    return "{0}.{1}".format(parent_msg_id, attr_name)

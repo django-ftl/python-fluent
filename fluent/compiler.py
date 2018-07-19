@@ -13,7 +13,7 @@ from .syntax.ast import (Attribute, AttributeExpression, BaseNode, CallExpressio
                          NumberLiteral, Pattern, Placeable, SelectExpression, StringLiteral, Term, TermReference,
                          TextElement, VariableReference, VariantExpression, VariantList, VariantName)
 from .types import FluentDateType, FluentNumber, FluentType
-from .utils import args_match, inspect_function_args, numeric_to_native
+from .utils import args_match, inspect_function_args, message_id_for_attr, numeric_to_native
 
 try:
     from functools import singledispatch
@@ -228,8 +228,6 @@ def get_message_function_ast(message_dict):
             pass
         else:
             yield (msg_id, msg)
-        for msg_attr in msg.attributes:
-            yield (message_id_for_attr(msg_id, msg_attr.id.name), msg_attr)
 
 
 def get_term_ast(message_dict):
@@ -241,12 +239,6 @@ def get_term_ast(message_dict):
             pass
         else:
             yield (term_id, term)
-        for term_attr in term.attributes:
-            yield (message_id_for_attr(term_id, term_attr.id.name), term_attr)
-
-
-def message_id_for_attr(parent_msg_id, attr_name):
-    return "{0}.{1}".format(parent_msg_id, attr_name)
 
 
 def message_id_for_attr_expression(attr_expr):

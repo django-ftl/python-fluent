@@ -10,6 +10,7 @@ from fluent.compiler import messages_to_module
 from fluent.exceptions import FluentCyclicReferenceError, FluentReferenceError
 from fluent.syntax import FluentParser
 from fluent.syntax.ast import Message, Term
+from fluent.utils import add_message_and_attrs_to_store
 
 from .syntax import dedent_ftl
 from .test_codegen import normalize_python
@@ -24,10 +25,8 @@ def parse_ftl(source):
     resource = FluentParser().parse(source)
     messages = OrderedDict()
     for item in resource.body:
-        if isinstance(item, Message):
-            messages[item.id.name] = item
-        elif isinstance(item, Term):
-            messages[item.id.name] = item
+        if isinstance(item, (Message, Term)):
+            add_message_and_attrs_to_store(messages, item.id.name, item)
     return messages
 
 

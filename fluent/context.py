@@ -13,7 +13,7 @@ from .exceptions import FluentDuplicateMessageId, FluentJunkFound
 from .resolver import resolve
 from .syntax import FluentParser
 from .syntax.ast import Junk, Message, Term
-from .utils import cachedproperty
+from .utils import cachedproperty, add_message_and_attrs_to_store
 
 
 class MessageContextBase(object):
@@ -29,13 +29,16 @@ class MessageContextBase(object):
     See the documentation of the Fluent syntax for more information.
     """
 
-    def __init__(self, locales, functions=None, use_isolating=True, debug=False):
+    def __init__(self, locales, functions=None, use_isolating=True, debug=False,
+                 escapers=None):
         self.locales = locales
         _functions = BUILTINS.copy()
         if functions:
             _functions.update(functions)
         self._functions = _functions
         self._use_isolating = use_isolating
+        self._escapers = escapers or []
+
         self._messages = OrderedDict()
         self._terms = OrderedDict()
         self._debug = debug
@@ -46,25 +49,21 @@ class MessageContextBase(object):
         resource = parser.parse(source)
 
         for item in resource.body:
-            store = None
-            name = None
             if isinstance(item, Message):
-                store = self._messages
-                name = item.id.name
+                self._add_message(self._messages, item.id.name, item)
             elif isinstance(item, Term):
-                store = self._terms
-                name = item.id.name
+                self._add_message(self._terms, item.id.name, item)
             elif isinstance(item, Junk):
                 self._parsing_issues.append(
                     (None, FluentJunkFound("Junk found: " +
                                            '; '.join(a.message for a in item.annotations),
                                            item.annotations)))
 
-            if store is not None:
-                if name in store:
-                    self._parsing_issues.append((name, FluentDuplicateMessageId(
-                        "Duplicate definition for '{0}' added.".format(name))))
-                store[name] = item
+    def _add_message(self, store, name, item):
+        if name in store:
+            self._parsing_issues.append((name, FluentDuplicateMessageId(
+                "Duplicate definition for '{0}' added.".format(name))))
+        add_message_and_attrs_to_store(store, name, item)
 
     def has_message(self, message_id):
         try:
@@ -80,15 +79,7 @@ class MessageContextBase(object):
         return six.iterkeys(self._messages)
 
     def _get_message(self, message_id):
-        if '.' in message_id:
-            name, attr_name = message_id.split('.', 1)
-            msg = self._messages[name]
-            for attribute in msg.attributes:
-                if attribute.id.name == attr_name:
-                    return attribute.value
-            raise LookupError(message_id)
-        else:
-            return self._messages[message_id]
+        return self._messages[message_id]
 
     @cachedproperty
     def plural_form_for_number(self):
@@ -124,11 +115,10 @@ class MessageContextBase(object):
 
 class InterpretingMessageContext(MessageContextBase):
     def format(self, message_id, args=None):
-        message = self._get_message(message_id)
         if args is None:
             args = {}
         errors = []
-        resolved = resolve(self, message, args, errors=errors)
+        resolved = resolve(self, message_id, args, errors=errors)
         return resolved, errors
 
     def check_messages(self):

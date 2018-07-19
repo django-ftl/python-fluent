@@ -1,17 +1,20 @@
 from __future__ import absolute_import, unicode_literals
 
+import contextlib
 from datetime import date, datetime
 from decimal import Decimal
 
 import attr
 import six
 
+from .escapers import escaper_for_message, escapers_compatible
 from .exceptions import FluentCyclicReferenceError, FluentReferenceError
-from .syntax.ast import (AttributeExpression, CallExpression, Message, MessageReference, NumberLiteral, Pattern,
-                         Placeable, SelectExpression, StringLiteral, Term, TermReference, TextElement,
-                         VariableReference, VariantExpression, VariantList, VariantName)
+from .syntax.ast import (Attribute, AttributeExpression, CallExpression, Message, MessageReference,
+                         NumberLiteral, Pattern, Placeable, SelectExpression,
+                         StringLiteral, Term, TermReference, TextElement, VariableReference,
+                         VariantExpression, VariantList, VariantName)
 from .types import FluentDateType, FluentNone, FluentNumber, fluent_date, fluent_number
-from .utils import args_match, inspect_function_args, numeric_to_native
+from .utils import args_match, inspect_function_args, message_id_for_attr, numeric_to_native
 
 try:
     from functools import singledispatch
@@ -35,6 +38,13 @@ PDI = "\u2069"
 
 
 @attr.s
+class CurrentEnvironment(object):
+    # The parts of ResolverEnvironment that we want to mutate (and restore)
+    # temporarily for some parts of a call chain.
+    escaper = attr.ib(default=None)
+
+
+@attr.s
 class ResolverEnvironment(object):
     context = attr.ib()
     args = attr.ib()
@@ -42,9 +52,27 @@ class ResolverEnvironment(object):
     dirty = attr.ib(factory=set)
     part_count = attr.ib(default=0)
     functions_arg_spec = attr.ib(factory=dict)
+    current = attr.ib(factory=CurrentEnvironment)
+
+    @contextlib.contextmanager
+    def modified(self, **replacements):
+        """
+        Context manager that modifies the 'current' attribute of the
+        environment, restoring the old data at the end.
+        """
+        # CurrentEnvironment only has immutable args at the moment,
+        # so we can avoid deep copies.
+        old_current = self.current
+        new_attrs = {}
+        new_attrs.update(old_current.__dict__)
+        new_attrs.update(replacements)
+        new_current = CurrentEnvironment(**new_attrs)
+        self.current = new_current
+        yield self
+        self.current = old_current
 
 
-def resolve(context, message, args, errors=None):
+def resolve(context, message_id, args, errors=None):
     """
     Given a MessageContext, a Message instance and some arguments,
     resolve the message to a string.
@@ -53,11 +81,14 @@ def resolve(context, message, args, errors=None):
     """
     if errors is None:
         errors = []
+    message = context._get_message(message_id)
+    escaper = escaper_for_message(context._escapers, message_id, message)
     env = ResolverEnvironment(context=context,
                               args=args,
                               errors=errors,
                               functions_arg_spec={name: inspect_function_args(func)
-                                                  for name, func in context._functions.items()}
+                                                  for name, func in context._functions.items()},
+                              current=CurrentEnvironment(escaper=escaper)
                               )
 
     return fully_resolve(message, env)
@@ -73,7 +104,7 @@ def fully_resolve(expr, env):
     # only used when we must have a string.
     retval = handle(expr, env)
     if isinstance(retval, text_type):
-        return retval
+        return env.current.escaper.escape(retval)
     else:
         return fully_resolve(retval, env)
 
@@ -92,6 +123,11 @@ def handle_message(message, env):
 @handle.register(Term)
 def handle_term(term, env):
     return handle(term.value, env)
+
+
+@handle.register(Attribute)
+def handle_message(attribute, env):
+    return handle(attribute.value, env)
 
 
 @handle.register(Pattern)
@@ -117,7 +153,7 @@ def handle_pattern(pattern, env):
 
         if isinstance(element, TextElement):
             # shortcut deliberately omits the FSI/PDI chars here.
-            parts.append(element.value)
+            parts.append(handle(element, env))
             continue
 
         part = fully_resolve(element, env)
@@ -132,14 +168,14 @@ def handle_pattern(pattern, env):
         parts.append(part)
         if use_isolating:
             parts.append(PDI)
-    retval = "".join(parts)
+    retval = env.current.escaper.string_join(parts)
     env.dirty.remove(pattern)
     return retval
 
 
 @handle.register(TextElement)
 def handle_text_element(text_element, env):
-    return text_element.value
+    return env.current.escaper.mark_escaped(text_element.value)
 
 
 @handle.register(Placeable)
@@ -160,35 +196,52 @@ def handle_number_expression(number_expression, env):
 @handle.register(MessageReference)
 def handle_message_reference(message_reference, env):
     name = message_reference.id.name
-    return handle(lookup_reference(name, env), env)
+    message, new_escaper = lookup_reference(env, name)
+    with env.modified(escaper=new_escaper):
+        return handle(message, env)
 
 
 @handle.register(TermReference)
 def handle_term_reference(term_reference, env):
     name = term_reference.id.name
-    return handle(lookup_reference(name, env), env)
+    term, new_escaper = lookup_reference(env, name)
+    with env.modified(escaper=new_escaper):
+        return handle(term, env)
 
 
-def lookup_reference(name, env):
+def lookup_reference(env, message_name, attr_name=None):
+    message_id = message_name if attr_name is None else message_id_for_attr(message_name, attr_name)
     message = None
-    if name.startswith("-"):
-        try:
-            message = env.context._terms[name]
-        except LookupError:
-            env.errors.append(
-                FluentReferenceError("Unknown term: {0}"
-                                     .format(name)))
+    current_escaper = env.current.escaper
+    if message_id.startswith("-"):
+        store = env.context._terms
+        error_msg = "Unknown term: {0}" if attr_name is None else "Unknown attribute: {0}"
     else:
-        try:
-            message = env.context._messages[name]
-        except LookupError:
-            env.errors.append(
-                FluentReferenceError("Unknown message: {0}"
-                                     .format(name)))
-    if message is None:
-        message = FluentNone(name)
+        store = env.context._messages
+        error_msg = "Unknown message: {0}" if attr_name is None else "Unknown attribute: {0}"
 
-    return message
+    try:
+        message = store[message_id]
+    except LookupError:
+        env.errors.append(
+            FluentReferenceError(error_msg.format(message_id)))
+
+        if attr_name is not None and message_name in store:
+            # Default to parent
+            return lookup_reference(env, message_name)
+
+    if message is None:
+        message = FluentNone(message_id)
+
+    new_escaper = escaper_for_message(env.context._escapers, message_id, message)
+    if not escapers_compatible(current_escaper, new_escaper):
+        env.errors.append(
+            TypeError("Escaper {0} for message {1} cannot be used from calling context with {2} escaper"
+                      .format(new_escaper, message_id, current_escaper)))
+        message = FluentNone(message_id)
+        new_escaper = current_escaper
+
+    return message, new_escaper
 
 
 @handle.register(FluentNone)
@@ -219,18 +272,11 @@ def handle_variable_reference(argument, env):
 def handle_attribute_expression(attribute, env):
     parent_id = attribute.ref.id.name
     attr_name = attribute.name.name
-    message = lookup_reference(parent_id, env)
+    message, new_escaper = lookup_reference(env, parent_id, attr_name=attr_name)
     if isinstance(message, FluentNone):
         return message
-
-    for message_attr in message.attributes:
-        if message_attr.id.name == attr_name:
-            return handle(message_attr.value, env)
-
-    env.errors.append(
-        FluentReferenceError("Unknown attribute: {0}.{1}"
-                             .format(parent_id, attr_name)))
-    return handle(message, env)
+    with env.modified(escaper=new_escaper):
+        return handle(message, env)
 
 
 @handle.register(VariantList)
@@ -317,7 +363,7 @@ def handle_variant_name(name, env):
 
 @handle.register(VariantExpression)
 def handle_variant_expression(expression, env):
-    message = lookup_reference(expression.ref.id.name, env)
+    message, new_escaper = lookup_reference(env, expression.ref.id.name)
     if isinstance(message, FluentNone):
         return message
 
@@ -326,9 +372,10 @@ def handle_variant_expression(expression, env):
     assert isinstance(message.value, VariantList)
 
     variant_name = expression.key.name
-    return select_from_variant_list(message.value,
-                                    env,
-                                    variant_name)
+    with env.modified(escaper=new_escaper):
+        return select_from_variant_list(message.value,
+                                        env,
+                                        variant_name)
 
 
 @handle.register(CallExpression)
@@ -391,7 +438,8 @@ def handle_argument(arg, name, env):
     if isinstance(arg,
                   (int, float, Decimal,
                    date, datetime,
-                   text_type)):
+                   text_type,
+                   )):
         return arg
     env.errors.append(TypeError("Unsupported external type: {0}, {1}"
                                 .format(name, type(arg))))
