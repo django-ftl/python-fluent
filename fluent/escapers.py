@@ -1,5 +1,7 @@
 from __future__ import absolute_import, unicode_literals
 
+from .utils import make_namespace
+
 
 def identity(value):
     """
@@ -14,18 +16,16 @@ def identity(value):
 default_string_join = ''.join
 
 
-# Namespace class for default escaping (i.e. no escaping). It is used without
-# instantiating, hence not capitalised as a class.
-class null_escaper(object):
+def select_always(message_id=None, **kwargs):
+    return True
 
-    def select(message_id=None, **kwargs):
-        return True
 
-    escape = identity
-
-    mark_escaped = identity
-
-    string_join = default_string_join
+null_escaper = make_namespace(
+    select=select_always,
+    escape=identity,
+    mark_escaped=identity,
+    string_join=default_string_join,
+)
 
 
 def escapers_compatible(outer_escaper, inner_escaper):

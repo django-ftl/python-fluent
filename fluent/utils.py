@@ -162,3 +162,17 @@ def add_message_and_attrs_to_store(store, name, item, attribute=False):
 
 def message_id_for_attr(parent_msg_id, attr_name):
     return "{0}.{1}".format(parent_msg_id, attr_name)
+
+
+# On Python 3 we could get away with just using a class, but on Python 2
+# functions defined in the class body get wrapped with UnboundMethod, which
+# causes problems.
+def make_namespace(**attributes):
+    class namespace(object):
+        pass
+
+    namespace = namespace()
+    for k, v in attributes.items():
+        setattr(namespace, k, v)
+
+    return namespace

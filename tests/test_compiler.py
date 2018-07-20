@@ -11,7 +11,7 @@ from fluent.compiler import messages_to_module
 from fluent.exceptions import FluentCyclicReferenceError, FluentReferenceError
 from fluent.syntax import FluentParser
 from fluent.syntax.ast import Message, Term
-from fluent.utils import add_message_and_attrs_to_store
+from fluent.utils import add_message_and_attrs_to_store, make_namespace
 
 from .syntax import dedent_ftl
 from .test_codegen import normalize_python
@@ -597,19 +597,12 @@ class TestCompiler(CompilerTestMixin, unittest.TestCase):
                                 ])
 
 
-class html_escaper(object):
-
-    def select(message_id=None, **hints):
-        return message_id.endswith('-html')
-
-    def mark_escaped(escaped):
-        return Markup(escaped)
-
-    def escape(unescaped):
-        return escape(unescaped)
-
-    def string_join(parts):
-        return Markup('').join(parts)
+html_escaper = make_namespace(
+    select=lambda message_id=None, **hints: message_id.endswith('-html'),
+    mark_escaped=Markup,
+    escape=escape,
+    string_join=lambda parts: Markup('').join(parts)
+)
 
 
 class TestCompilerEscaping(CompilerTestMixin, unittest.TestCase):
