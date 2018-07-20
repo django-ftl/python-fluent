@@ -4,6 +4,7 @@ import unittest
 from collections import OrderedDict
 
 import babel
+from markupsafe import Markup, escape
 
 from fluent.builtins import BUILTINS
 from fluent.compiler import messages_to_module
@@ -30,7 +31,8 @@ def parse_ftl(source):
     return messages
 
 
-def compile_messages_to_python(source, locale, use_isolating=False, functions=None):
+def compile_messages_to_python(source, locale, use_isolating=False, functions=None,
+                               escapers=None):
     if functions is None:
         functions = {}
     _functions = BUILTINS.copy()
@@ -39,11 +41,12 @@ def compile_messages_to_python(source, locale, use_isolating=False, functions=No
     module, message_mapping, module_globals, errors = messages_to_module(
         messages, locale,
         use_isolating=use_isolating,
-        functions=_functions)
+        functions=_functions,
+        escapers=escapers)
     return module.as_source_code(), errors
 
 
-class TestCompiler(unittest.TestCase):
+class CompilerTestMixin(object):
     locale = babel.Locale.parse('en_US')
 
     maxDiff = None
@@ -51,6 +54,9 @@ class TestCompiler(unittest.TestCase):
     def assertCodeEqual(self, code1, code2):
         self.assertEqual(normalize_python(code1),
                          normalize_python(code2))
+
+
+class TestCompiler(CompilerTestMixin, unittest.TestCase):
 
     def test_single_string_literal(self):
         code, errs = compile_messages_to_python("""
@@ -589,3 +595,42 @@ class TestCompiler(unittest.TestCase):
         self.assertEqual(errs, [('foo', FluentCyclicReferenceError("Cyclic reference in foo")),
                                 ('bar', FluentCyclicReferenceError("Cyclic reference in bar")),
                                 ])
+
+
+class html_escaper(object):
+
+    def select(message_id=None, **hints):
+        return message_id.endswith('-html')
+
+    def mark_escaped(escaped):
+        return Markup(escaped)
+
+    def escape(unescaped):
+        return escape(unescaped)
+
+    def string_join(parts):
+        return Markup('').join(parts)
+
+
+class TestCompilerEscaping(CompilerTestMixin, unittest.TestCase):
+    escapers = [html_escaper]
+
+    def compile_messages(self, code, **kwargs):
+        return compile_messages_to_python(code, self.locale, escapers=self.escapers, **kwargs)
+
+    def test_argument(self):
+        code, errs = self.compile_messages("""
+            foo-html = { $arg }
+        """)
+        self.assertCodeEqual(code, """
+            def foo_html(message_args, errors):
+                try:
+                    _tmp = message_args['arg']
+                except LookupError:
+                    errors.append(FluentReferenceError('Unknown external: arg'))
+                    _tmp = FluentNone('arg')
+                else:
+                    _tmp = handle_argument(_tmp, 'arg', locale, errors)
+
+                return (escaper_0__escape(handle_output(_tmp, locale, errors)), errors)
+        """)

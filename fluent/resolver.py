@@ -82,7 +82,7 @@ def resolve(context, message_id, args, errors=None):
     if errors is None:
         errors = []
     message = context._get_message(message_id)
-    escaper = escaper_for_message(context._escapers, message_id, message)
+    escaper = escaper_for_message(context._escapers, message_id)
     env = ResolverEnvironment(context=context,
                               args=args,
                               errors=errors,
@@ -233,7 +233,7 @@ def lookup_reference(env, message_name, attr_name=None):
     if message is None:
         message = FluentNone(message_id)
 
-    new_escaper = escaper_for_message(env.context._escapers, message_id, message)
+    new_escaper = escaper_for_message(env.context._escapers, message_id)
     if not escapers_compatible(current_escaper, new_escaper):
         env.errors.append(
             TypeError("Escaper {0} for message {1} cannot be used from calling context with {2} escaper"

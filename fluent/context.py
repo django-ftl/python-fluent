@@ -149,6 +149,7 @@ class CompilingMessageContext(MessageContextBase):
             self._babel_locale,
             use_isolating=self._use_isolating,
             functions=self._functions,
+            escapers=self._escapers,
             debug=self._debug)
         self._is_dirty = False
 

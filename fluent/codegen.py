@@ -420,13 +420,18 @@ class List(Expression):
 
 
 class StringJoin(Expression):
-    type = text_type
+    type = text_type  # TODO - update for escapers
 
-    def __init__(self, parts):
+    def __init__(self, parts, custom_joiner_name=None):
         self.parts = parts
+        self.custom_joiner_name = custom_joiner_name
 
     def as_source_code(self):
-        return "''.join(" + List(self.parts).as_source_code() + ')'
+        if self.custom_joiner_name is None:
+            joiner = "''.join"
+        else:
+            joiner = self.custom_joiner_name
+        return "{0}({1})".format(joiner, List(self.parts).as_source_code())
 
     def simplify(self, changes):
         # Simplify sub parts

@@ -2,7 +2,16 @@ from __future__ import absolute_import, unicode_literals
 
 
 def identity(value):
+    """
+    Identity function.
+    The function is also used as a sentinel value by the
+    compiler for it to detect a no-op
+    """
     return value
+
+
+# Default string join function and sentinel value
+default_string_join = ''.join
 
 
 # Namespace class for default escaping (i.e. no escaping). It is used without
@@ -16,7 +25,7 @@ class null_escaper(object):
 
     mark_escaped = identity
 
-    string_join = ''.join
+    string_join = default_string_join
 
 
 def escapers_compatible(outer_escaper, inner_escaper):
@@ -31,7 +40,7 @@ def escapers_compatible(outer_escaper, inner_escaper):
     return outer_escaper is inner_escaper
 
 
-def escaper_for_message(escapers, message_id, message):
+def escaper_for_message(escapers, message_id):
     if escapers:
         for escaper in escapers:
             if escaper.select(message_id=message_id):

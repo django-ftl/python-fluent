@@ -8,6 +8,7 @@ import babel
 import six
 
 from . import codegen, runtime
+from .escapers import escaper_for_message, escapers_compatible, identity, null_escaper
 from .exceptions import FluentCyclicReferenceError, FluentReferenceError
 from .syntax.ast import (Attribute, AttributeExpression, BaseNode, CallExpression, Message, MessageReference,
                          NumberLiteral, Pattern, Placeable, SelectExpression, StringLiteral, Term, TermReference,
@@ -70,6 +71,7 @@ class CompilerEnvironment(object):
     errors = attr.ib(factory=list)
     functions = attr.ib(factory=dict)
     function_renames = attr.ib(factory=dict)
+    escapers = attr.ib(factory=list)
     debug = attr.ib(default=False)
     functions_arg_spec = attr.ib(factory=dict)
     message_ids_to_ast = attr.ib(factory=dict)
@@ -93,7 +95,8 @@ class CompilerEnvironment(object):
         self.current = old_current
 
 
-def compile_messages(messages, locale, use_isolating=True, functions=None, debug=False):
+def compile_messages(messages, locale, use_isolating=True, functions=None,
+                     escapers=None, debug=False):
     """
     Compile a dictionary of {id: Message/Term objects} to a Python module,
     and returns a tuple:
@@ -105,10 +108,13 @@ def compile_messages(messages, locale, use_isolating=True, functions=None, debug
     """
     if functions is None:
         functions = {}
+    if escapers is None:
+        escapers = []
     module, message_mapping, module_globals, errors = messages_to_module(
         messages, locale,
         use_isolating=use_isolating,
         functions=functions,
+        escapers=escapers,
         debug=debug)
     # TODO - it would be nice to be able to get back to FTL source file lines,
     # if were knew what they were, and pass absolute filename that to 'compile'
@@ -124,13 +130,16 @@ def compile_messages(messages, locale, use_isolating=True, functions=None, debug
     return (retval, errors)
 
 
-def messages_to_module(messages, locale, use_isolating=True, functions=None, debug=False):
+def messages_to_module(messages, locale, use_isolating=True, functions=None,
+                       escapers=None, debug=False):
     """
     Compile a set of messages to a Python module, returning a tuple:
     (Python source code as a string, dictionary mapping message IDs to Python functions)
     """
     if functions is None:
         functions = {}
+    if escapers is None:
+        escapers = []
 
     message_ids_to_ast = OrderedDict(get_message_function_ast(messages))
     term_ids_to_ast = OrderedDict(get_term_ast(messages))
@@ -139,6 +148,7 @@ def messages_to_module(messages, locale, use_isolating=True, functions=None, deb
         locale=locale,
         use_isolating=use_isolating,
         functions=functions,
+        escapers=escapers,
         debug=debug,
         functions_arg_spec={name: inspect_function_args(func)
                             for name, func in functions.items()},
@@ -185,6 +195,21 @@ def messages_to_module(messages, locale, use_isolating=True, functions=None, deb
                                    )
         # We should have chosen all our module_globals to avoid name conflicts:
         assert name == k, "Expected {0}=={1}".format(name, k)
+
+    # Reserve names for escapers
+    for escaper in escapers:
+        # Need to reserve names for:
+        # escaper.mark_escaped, escaper.escape, escaper.string_join
+        for attr_name, namer in [("mark_escaped", escaper_mark_escaped_name),
+                                 ("escape", escaper_escape_name),
+                                 ("string_join", escaper_string_join_name),
+                                 ]:
+            name = namer(escaper, compiler_env)
+            assigned_name = module.reserve_name(name)
+            # We've chosen the names to not clash:
+            assert assigned_name == name
+            assert assigned_name not in module_globals
+            module_globals[assigned_name] = getattr(escaper, attr_name)
 
     # Reserve names for function arguments, so that we always
     # know the name of these arguments without needing to do
@@ -239,6 +264,23 @@ def get_term_ast(message_dict):
             pass
         else:
             yield (term_id, term)
+
+
+def escaper_prefix(escaper, compiler_env):
+    idx = compiler_env.escapers.index(escaper)
+    return "escaper_{0}_".format(idx)
+
+
+def escaper_mark_escaped_name(escaper, compiler_env):
+    return "{0}_mark_escaped".format(escaper_prefix(escaper, compiler_env))
+
+
+def escaper_escape_name(escaper, compiler_env):
+    return "{0}_escape".format(escaper_prefix(escaper, compiler_env))
+
+
+def escaper_string_join_name(escaper, compiler_env):
+    return "{0}_string_join".format(escaper_prefix(escaper, compiler_env))
 
 
 def message_id_for_attr_expression(attr_expr):
@@ -415,13 +457,20 @@ def compile_expr_pattern(pattern, local_scope, parent_expr, compiler_env):
         if wrap_this_with_isolating:
             parts.append(codegen.String(PDI))
 
+    escaper = escaper_for_message(compiler_env.escapers,
+                                  compiler_env.current.message_id)
+    if escaper.string_join is not null_escaper.string_join:
+        custom_joiner_name = escaper_string_join_name(escaper, compiler_env)
+    else:
+        custom_joiner_name = None
     # > ''.join($[p for p in parts])
-    return codegen.StringJoin([finalize_expr_as_string(p, local_scope, compiler_env) for p in parts])
+    return codegen.StringJoin([finalize_expr_as_string(p, local_scope, compiler_env) for p in parts],
+                              custom_joiner_name=custom_joiner_name)
 
 
 @compile_expr.register(TextElement)
 def compile_expr_text(text, local_scope, parent_expr, compiler_env):
-    return codegen.String(text.value)
+    return wrap_with_mark_escaped(codegen.String(text.value), local_scope, compiler_env)
 
 
 @compile_expr.register(StringLiteral)
@@ -463,7 +512,21 @@ def compile_expr_term_reference(reference, local_scope, parent_expr, compiler_en
     name = reference.id.name
     if name in compiler_env.term_ids_to_ast:
         term = compiler_env.term_ids_to_ast[name]
-        return compile_expr(term.value, local_scope, reference, compiler_env)
+        current_escaper = escaper_for_message(compiler_env.escapers,
+                                              compiler_env.current.message_id)
+        new_escaper = escaper_for_message(compiler_env.escapers,
+                                          name)
+        if not escapers_compatible(current_escaper, new_escaper):
+            error = TypeError("Escaper {0} for term {1} cannot be used from calling context with {2} escaper"
+                              .format(new_escaper, name, current_escaper))
+            add_static_msg_error(local_scope, error)
+            compiler_env.add_current_message_error(error)
+            return make_fluent_none(name, local_scope)
+        else:
+            with compiler_env.modified(message_id=name):
+                value = compile_expr(term.value, local_scope, reference, compiler_env)
+            return wrap_with_escaper(value, local_scope, compiler_env)
+
     else:
         error = FluentReferenceError("Unknown term: {0}".format(name))
         add_static_msg_error(local_scope, error)
@@ -471,24 +534,39 @@ def compile_expr_term_reference(reference, local_scope, parent_expr, compiler_en
         return make_fluent_none(name, local_scope)
 
 
-def do_message_call(name, local_scope, parent_expr, compiler_env):
-    if name in compiler_env.message_mapping:
-        # Message functions always return strings, so we can type this variable:
-        tmp_name = local_scope.reserve_name('_tmp', properties={codegen.PROPERTY_TYPE: text_type})
-        msg_func_name = compiler_env.message_mapping[name]
-        # > $tmp_name = $msg_func_name(message_args, errors)
-        local_scope.add_assignment(
-            (tmp_name, ERRORS_NAME),
-            codegen.FunctionCall(msg_func_name,
-                                 [codegen.VariableReference(a, local_scope) for a in MESSAGE_FUNCTION_ARGS],
-                                 {},
-                                 local_scope))
+def do_message_call(message_id, local_scope, parent_expr, compiler_env):
+    if message_id in compiler_env.message_mapping:
+        current_escaper = escaper_for_message(compiler_env.escapers,
+                                              compiler_env.current.message_id)
+        new_escaper = escaper_for_message(compiler_env.escapers,
+                                          message_id)
+        if not escapers_compatible(current_escaper, new_escaper):
+            error = TypeError("Escaper {0} for message {1} cannot be used from calling context with {2} escaper"
+                              .format(new_escaper, message_id, current_escaper))
+            add_static_msg_error(local_scope, error)
+            compiler_env.add_current_message_error(error)
+            return make_fluent_none(message_id, local_scope)
 
-        # > $tmp_name
-        return codegen.VariableReference(tmp_name, local_scope)
+        else:
+            # Message functions always return strings, so we can type this variable:
+            # TODO - correct return types for cases involving escapers
+            tmp_name = local_scope.reserve_name('_tmp', properties={codegen.PROPERTY_TYPE: text_type})
+            msg_func_name = compiler_env.message_mapping[message_id]
+            # > $tmp_name = $msg_func_name(message_args, errors)
+            local_scope.add_assignment(
+                (tmp_name, ERRORS_NAME),
+                codegen.FunctionCall(msg_func_name,
+                                     [codegen.VariableReference(a, local_scope) for a in MESSAGE_FUNCTION_ARGS],
+                                     {},
+                                     local_scope))
+
+            # > $escaper.escape($tmp_name)
+            return wrap_with_escaper(
+                codegen.VariableReference(tmp_name, local_scope),
+                local_scope, compiler_env)
 
     else:
-        return unknown_reference(name, local_scope, compiler_env)
+        return unknown_reference(message_id, local_scope, compiler_env)
 
 
 def unknown_reference(name, local_scope, compiler_env):
@@ -645,9 +723,22 @@ def compile_expr_variant_expression(variant_expr, local_scope, parent_expr, comp
     if term_id in compiler_env.term_ids_to_ast:
         term_val = compiler_env.term_ids_to_ast[term_id].value
         if isinstance(term_val, VariantList):
-            return compile_expr_variant_list(term_val, local_scope, variant_expr, compiler_env,
-                                             selected_key=variant_expr.key,
-                                             term_id=term_id)
+            current_escaper = escaper_for_message(compiler_env.escapers,
+                                                  compiler_env.current.message_id)
+            new_escaper = escaper_for_message(compiler_env.escapers,
+                                              term_id)
+            if not escapers_compatible(current_escaper, new_escaper):
+                error = TypeError("Escaper {0} for term {1} cannot be used from calling context with {2} escaper"
+                                  .format(new_escaper, term_id, current_escaper))
+                add_static_msg_error(local_scope, error)
+                compiler_env.add_current_message_error(error)
+                return make_fluent_none(term_id, local_scope)
+            else:
+                with compiler_env.modified(message_id=term_id):
+                    value = compile_expr_variant_list(term_val, local_scope, variant_expr, compiler_env,
+                                                      selected_key=variant_expr.key,
+                                                      term_id=term_id)
+                return wrap_with_escaper(value, local_scope, compiler_env)
         else:
             error = FluentReferenceError('Unknown variant: {0}[{1}]'.format(
                 term_id, variant_expr.key.name))
@@ -731,22 +822,46 @@ def finalize_expr_as_string(python_expr, scope, compiler_env):
     a string.
     """
     if issubclass(python_expr.type, text_type):
-        return python_expr
+        retval = python_expr
     elif issubclass(python_expr.type, FluentType):
         # > $python_expr.format(locale)
-        return codegen.MethodCall(python_expr,
-                                  'format',
-                                  [codegen.VariableReference(LOCALE_NAME, scope)],
-                                  expr_type=text_type)
+        retval = codegen.MethodCall(python_expr,
+                                    'format',
+                                    [codegen.VariableReference(LOCALE_NAME, scope)],
+                                    expr_type=text_type)
     else:
         # > handle_output($python_expr, locale, errors)
-        return codegen.FunctionCall('handle_output',
-                                    [python_expr,
-                                     codegen.VariableReference(LOCALE_NAME, scope),
-                                     codegen.VariableReference(ERRORS_NAME, scope)],
-                                    {},
-                                    scope,
-                                    expr_type=text_type)
+        retval = codegen.FunctionCall('handle_output',
+                                      [python_expr,
+                                       codegen.VariableReference(LOCALE_NAME, scope),
+                                       codegen.VariableReference(ERRORS_NAME, scope)],
+                                      {},
+                                      scope)
+    return wrap_with_escaper(retval, scope, compiler_env)
+
+
+def wrap_with_escaper(python_expr, scope, compiler_env):
+    message_id = compiler_env.current.message_id
+    escaper = escaper_for_message(compiler_env.escapers,
+                                  message_id)
+    if escaper.escape is identity:
+        return python_expr
+    return codegen.FunctionCall(escaper_escape_name(escaper, compiler_env),
+                                [python_expr],
+                                {},
+                                scope)
+
+
+def wrap_with_mark_escaped(python_expr, scope, compiler_env):
+    message_id = compiler_env.current.message_id
+    escaper = escaper_for_message(compiler_env.escapers,
+                                  message_id)
+    if escaper.mark_escaped is identity:
+        return python_expr
+    return codegen.FunctionCall(escaper_mark_escaped_name(escaper, compiler_env),
+                                [python_expr],
+                                {},
+                                scope)
 
 
 def is_NUMBER_call_expr(expr):
