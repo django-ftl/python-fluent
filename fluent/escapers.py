@@ -25,6 +25,7 @@ null_escaper = make_namespace(
     escape=identity,
     mark_escaped=identity,
     string_join=default_string_join,
+    use_isolating=None,
     name='null_escaper',
 )
 

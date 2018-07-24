@@ -138,8 +138,12 @@ def handle_pattern(pattern, env):
 
     env.dirty.add(pattern)
 
+    escaper = env.current.escaper
     parts = []
-    use_isolating = env.context._use_isolating and len(pattern.elements) > 1
+    use_isolating = ((escaper.use_isolating
+                      if escaper.use_isolating is not None
+                      else env.context._use_isolating) and
+                     len(pattern.elements) > 1)
 
     for element in pattern.elements:
         env.part_count += 1
@@ -158,7 +162,7 @@ def handle_pattern(pattern, env):
 
         part = fully_resolve(element, env)
         if use_isolating:
-            parts.append(FSI)
+            parts.append(escaper.escape(FSI))
         if len(part) > MAX_PART_LENGTH:
             env.errors.append(ValueError(
                 "Too many characters in part, "
@@ -167,8 +171,8 @@ def handle_pattern(pattern, env):
             part = part[:MAX_PART_LENGTH]
         parts.append(part)
         if use_isolating:
-            parts.append(PDI)
-    retval = env.current.escaper.string_join(parts)
+            parts.append(escaper.escape(PDI))
+    retval = escaper.string_join(parts)
     env.dirty.remove(pattern)
     return retval
 

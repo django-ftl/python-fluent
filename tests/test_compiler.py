@@ -603,6 +603,7 @@ html_escaper = make_namespace(
     escape=escape,
     string_join=lambda parts: Markup('').join(parts),
     name='html_escaper',
+    use_isolating=False,
 )
 
 

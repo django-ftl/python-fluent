@@ -13,6 +13,8 @@ class HtmlEscaper(object):
 
     name = 'HtmlEscaper'
 
+    use_isolating = False
+
     def __init__(self, test_case):
         self.test_case = test_case
 
@@ -44,7 +46,7 @@ class TestEscapers(unittest.TestCase):
         def QUOTE(arg):
             return "\n" + "\n".join("> {0}".format(l) for l in arg.split("\n"))
 
-        self.ctx = self.message_context_cls(['en-US'], use_isolating=False,
+        self.ctx = self.message_context_cls(['en-US'], use_isolating=True,
                                             functions={'QUOTE': QUOTE},
                                             escapers=[escaper])
 
@@ -156,13 +158,13 @@ class TestEscapers(unittest.TestCase):
 
     def test_html_message_reference_from_plain(self):
         val, errs = self.ctx.format('references-html-message-plain')
-        self.assertTypeAndValueEqual(val, "Plain. simple-html")
+        self.assertTypeAndValueEqual(val, "Plain. \u2068simple-html\u2069")
         self.assertEqual(len(errs), 1)
         self.assertEqual(type(errs[0]), TypeError)
 
     def test_html_attr_reference_from_plain(self):
         val, errs = self.ctx.format('references-html-attr-plain')
-        self.assertTypeAndValueEqual(val, "Plain. parent-plain.attr-html")
+        self.assertTypeAndValueEqual(val, "Plain. \u2068parent-plain.attr-html\u2069")
         self.assertEqual(len(errs), 1)
         self.assertEqual(type(errs[0]), TypeError)
 
@@ -178,7 +180,7 @@ class TestEscapers(unittest.TestCase):
 
     def test_html_variant_from_plain(self):
         val, errs = self.ctx.format('references-html-variant-plain')
-        self.assertTypeAndValueEqual(val, "-brand-html is cool")
+        self.assertTypeAndValueEqual(val, "\u2068-brand-html\u2069 is cool")
         self.assertEqual(len(errs), 1)
         self.assertEqual(type(errs[0]), TypeError)
 
@@ -189,7 +191,7 @@ class TestEscapers(unittest.TestCase):
 
     def test_plain_variant_from_plain(self):
         val, errs = self.ctx.format('references-plain-variant-plain')
-        self.assertTypeAndValueEqual(val, "A&B is awesome")
+        self.assertTypeAndValueEqual(val, "\u2068A&B\u2069 is awesome")
         self.assertEqual(errs, [])
 
     def test_plain_variant_from_html(self):

@@ -447,18 +447,22 @@ def compile_expr_pattern(pattern, local_scope, parent_expr, compiler_env):
     parts = []
     subelements = pattern.elements
 
-    use_isolating = compiler_env.use_isolating and len(subelements) > 1
+    escaper = escaper_for_message(compiler_env.escapers,
+                                  compiler_env.current.message_id)
+
+    use_isolating = ((escaper.use_isolating
+                      if escaper.use_isolating is not None
+                      else compiler_env.use_isolating) and
+                     len(subelements) > 1)
 
     for element in pattern.elements:
         wrap_this_with_isolating = use_isolating and not isinstance(element, TextElement)
         if wrap_this_with_isolating:
-            parts.append(codegen.String(FSI))
+            parts.append(wrap_with_escaper(codegen.String(FSI), local_scope, compiler_env))
         parts.append(compile_expr(element, local_scope, pattern, compiler_env))
         if wrap_this_with_isolating:
-            parts.append(codegen.String(PDI))
+            parts.append(wrap_with_escaper(codegen.String(PDI), local_scope, compiler_env))
 
-    escaper = escaper_for_message(compiler_env.escapers,
-                                  compiler_env.current.message_id)
     if escaper.string_join is not null_escaper.string_join:
         custom_joiner_name = escaper_string_join_name(escaper, compiler_env)
     else:
