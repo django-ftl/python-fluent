@@ -199,8 +199,9 @@ def messages_to_module(messages, locale, use_isolating=True, functions=None,
     # Reserve names for escapers
     for escaper in escapers:
         # Need to reserve names for:
-        # escaper.mark_escaped, escaper.escape, escaper.string_join
-        for attr_name, namer in [("mark_escaped", escaper_mark_escaped_name),
+        # escaper.output_type, escaper.mark_escaped, escaper.escape, escaper.string_join
+        for attr_name, namer in [("output_type", escaper_output_type_name),
+                                 ("mark_escaped", escaper_mark_escaped_name),
                                  ("escape", escaper_escape_name),
                                  ("string_join", escaper_string_join_name),
                                  ]:
@@ -271,6 +272,10 @@ def escaper_prefix(escaper, compiler_env):
     return "escaper_{0}_".format(idx)
 
 
+def escaper_output_type_name(escaper, compiler_env):
+    return "{0}_output_type".format(escaper_prefix(escaper, compiler_env))
+
+
 def escaper_mark_escaped_name(escaper, compiler_env):
     return "{0}_mark_escaped".format(escaper_prefix(escaper, compiler_env))
 
@@ -303,7 +308,7 @@ def compile_message(msg, msg_id, function_name, module, compiler_env):
         error = FluentCyclicReferenceError("Cyclic reference in {0}".format(msg_id))
         add_static_msg_error(msg_func, error)
         compiler_env.add_current_message_error(error)
-        return_expression = finalize_expr_as_string(make_fluent_none(None, module), msg_func, compiler_env)
+        return_expression = finalize_expr_as_output_type(make_fluent_none(None, module), msg_func, compiler_env)
     else:
         return_expression = compile_expr(msg, msg_func, None, compiler_env)
     # > return ($return_expression, errors)
@@ -468,7 +473,7 @@ def compile_expr_pattern(pattern, local_scope, parent_expr, compiler_env):
     else:
         custom_joiner_name = None
     # > ''.join($[p for p in parts])
-    return codegen.StringJoin([finalize_expr_as_string(p, local_scope, compiler_env) for p in parts],
+    return codegen.StringJoin([finalize_expr_as_output_type(p, local_scope, compiler_env) for p in parts],
                               custom_joiner_name=custom_joiner_name)
 
 
@@ -781,16 +786,31 @@ def compile_expr_external_argument(argument, local_scope, parent_expr, compiler_
     # expensive). So we miss that out if possible.
     add_handle_argument = not isinstance(parent_expr, SelectExpression)
     if add_handle_argument:
-        # > $tmp_name = handle_argument($tmp_name, "$name", locale, errors)
-        try_catch.else_block.add_assignment(
-            tmp_name,
-            codegen.FunctionCall("handle_argument",
-                                 [codegen.VariableReference(tmp_name, local_scope),
-                                  codegen.String(name),
-                                  codegen.VariableReference(LOCALE_NAME, local_scope),
-                                  codegen.VariableReference(ERRORS_NAME, local_scope)],
-                                 {},
-                                 local_scope))
+        # > $tmp_name = handle_argument($tmp_name, "$name", output_type, locale, errors)
+        # or
+        # >  $tmp_name = handle_argument_null_escaper($tmp_name, "$name", locale, errors)
+        escaper = escaper_for_message(compiler_env.escapers,
+                                      compiler_env.current.message_id)
+        if escaper is null_escaper:
+            handle_arg_expr = codegen.FunctionCall(
+                "handle_argument_null_escaper",
+                [codegen.VariableReference(tmp_name, local_scope),
+                 codegen.String(name),
+                 codegen.VariableReference(LOCALE_NAME, local_scope),
+                 codegen.VariableReference(ERRORS_NAME, local_scope)],
+                {},
+                local_scope)
+        else:
+            handle_arg_expr = codegen.FunctionCall(
+                "handle_argument",
+                [codegen.VariableReference(tmp_name, local_scope),
+                 codegen.String(name),
+                 codegen.VariableReference(escaper_output_type_name(escaper, compiler_env), local_scope),
+                 codegen.VariableReference(LOCALE_NAME, local_scope),
+                 codegen.VariableReference(ERRORS_NAME, local_scope)],
+                {},
+                local_scope)
+        try_catch.else_block.add_assignment(tmp_name, handle_arg_expr)
 
     local_scope.statements.append(try_catch)
     return codegen.VariableReference(tmp_name, local_scope)
@@ -820,28 +840,52 @@ def compile_expr_call_expression(expr, local_scope, parent_expr, compiler_env):
         return make_fluent_none(function_name + "()", local_scope)
 
 
-def finalize_expr_as_string(python_expr, scope, compiler_env):
+def finalize_expr_as_output_type(python_expr, scope, compiler_env):
     """
     Wrap an outputted Python expression with code to ensure that it will return
     a string.
     """
-    if issubclass(python_expr.type, text_type):
-        retval = python_expr
-    elif issubclass(python_expr.type, FluentType):
-        # > $python_expr.format(locale)
-        retval = codegen.MethodCall(python_expr,
-                                    'format',
-                                    [codegen.VariableReference(LOCALE_NAME, scope)],
-                                    expr_type=text_type)
+    escaper = escaper_for_message(compiler_env.escapers,
+                                  compiler_env.current.message_id)
+
+    if python_expr.type is escaper.output_type:
+        return python_expr
+
+    if issubclass(python_expr.type, six.text_type):
+        return wrap_with_escaper(python_expr, scope, compiler_env)
+
+    if issubclass(python_expr.type, FluentType):
+        # > $escaper.escape($python_expr.format(locale))
+        return wrap_with_escaper(
+            codegen.MethodCall(python_expr,
+                               'format',
+                               [codegen.VariableReference(LOCALE_NAME, scope)],
+                               expr_type=text_type),
+            scope, compiler_env)
     else:
-        # > handle_output($python_expr, locale, errors)
-        retval = codegen.FunctionCall('handle_output',
-                                      [python_expr,
-                                       codegen.VariableReference(LOCALE_NAME, scope),
-                                       codegen.VariableReference(ERRORS_NAME, scope)],
-                                      {},
-                                      scope)
-    return wrap_with_escaper(retval, scope, compiler_env)
+        if escaper is null_escaper:
+            # > handle_output_null_escaper($python_expr, locale, errors)
+            return codegen.FunctionCall('handle_output_null_escaper',
+                                        [python_expr,
+                                         codegen.VariableReference(LOCALE_NAME, scope),
+                                         codegen.VariableReference(ERRORS_NAME, scope)],
+                                        {},
+                                        scope)
+        else:
+            # > handle_output_escaper($python_expr, locale, errors)
+            return codegen.FunctionCall('handle_output',
+                                        [python_expr,
+                                         codegen.VariableReference(
+                                             escaper_output_type_name(escaper, compiler_env),
+                                             scope),
+                                         codegen.VariableReference(
+                                             escaper_escape_name(escaper, compiler_env),
+                                             scope),
+                                         codegen.VariableReference(LOCALE_NAME, scope),
+                                         codegen.VariableReference(ERRORS_NAME, scope)],
+                                        {},
+                                        scope,
+                                        expr_type=escaper.output_type)
 
 
 def wrap_with_escaper(python_expr, scope, compiler_env):
@@ -853,7 +897,8 @@ def wrap_with_escaper(python_expr, scope, compiler_env):
     return codegen.FunctionCall(escaper_escape_name(escaper, compiler_env),
                                 [python_expr],
                                 {},
-                                scope)
+                                scope,
+                                expr_type=escaper.output_type)
 
 
 def wrap_with_mark_escaped(python_expr, scope, compiler_env):

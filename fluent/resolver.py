@@ -92,14 +92,16 @@ def resolve(context, message_id, args, errors=None):
 
 def fully_resolve(expr, env):
     """
-    Fully resolve an expression to a string
+    Fully resolve an expression to a string (or current escaper's output type)
     """
     # This differs from 'handle' in that 'handle' will often return non-string
     # objects, even if a string could have been returned, to allow for further
     # handling of that object e.g. attributes of messages. fully_resolve is
-    # only used when we must have a string.
+    # only used when we must have a string/final output type
     retval = handle(expr, env)
-    if isinstance(retval, text_type):
+    if isinstance(retval, env.current.escaper.output_type):
+        return retval
+    elif isinstance(retval, text_type):
         return env.current.escaper.escape(retval)
     else:
         return fully_resolve(retval, env)
@@ -159,12 +161,18 @@ def handle_pattern(pattern, env):
         part = fully_resolve(element, env)
         if use_isolating:
             parts.append(escaper.escape(FSI))
-        if len(part) > MAX_PART_LENGTH:
-            env.errors.append(ValueError(
-                "Too many characters in part, "
-                "({0}, max allowed is {1})".format(len(part),
-                                                   MAX_PART_LENGTH)))
-            part = part[:MAX_PART_LENGTH]
+        try:
+            len_part = len(part)
+        except TypeError:
+            # Escapers may return types that don't support this.
+            pass
+        else:
+            if len_part > MAX_PART_LENGTH:
+                env.errors.append(ValueError(
+                    "Too many characters in part, "
+                    "({0}, max allowed is {1})".format(len(part),
+                                                       MAX_PART_LENGTH)))
+                part = part[:MAX_PART_LENGTH]
         parts.append(part)
         if use_isolating:
             parts.append(escaper.escape(PDI))
@@ -439,6 +447,7 @@ def handle_argument(arg, name, env):
                   (int, float, Decimal,
                    date, datetime,
                    text_type,
+                   env.current.escaper.output_type,
                    )):
         return arg
     env.errors.append(TypeError("Unsupported external type: {0}, {1}"

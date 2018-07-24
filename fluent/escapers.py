@@ -1,5 +1,7 @@
 from __future__ import absolute_import, unicode_literals
 
+import six
+
 from .utils import make_namespace
 
 
@@ -22,6 +24,7 @@ def select_always(message_id=None, **kwargs):
 
 null_escaper = make_namespace(
     select=select_always,
+    output_type=six.text_type,
     escape=identity,
     mark_escaped=identity,
     string_join=default_string_join,

@@ -229,9 +229,9 @@ class TestCompiler(CompilerTestMixin, unittest.TestCase):
                     errors.append(FluentReferenceError('Unknown external: arg'))
                     _tmp = FluentNone('arg')
                 else:
-                    _tmp = handle_argument(_tmp, 'arg', locale, errors)
+                    _tmp = handle_argument_null_escaper(_tmp, 'arg', locale, errors)
 
-                return (handle_output(_tmp, locale, errors), errors)
+                return (handle_output_null_escaper(_tmp, locale, errors), errors)
         """)
         self.assertEqual(errs, [])
 
@@ -257,7 +257,7 @@ class TestCompiler(CompilerTestMixin, unittest.TestCase):
                     errors.append(FluentReferenceError('Unknown external: arg'))
                     _tmp = FluentNone('arg')
                 else:
-                    _tmp = handle_argument(_tmp, 'arg', locale, errors)
+                    _tmp = handle_argument_null_escaper(_tmp, 'arg', locale, errors)
 
                 return (NUMBER(_tmp).format(locale), errors)
         """)
@@ -523,9 +523,9 @@ class TestCompiler(CompilerTestMixin, unittest.TestCase):
                     errors.append(FluentReferenceError('Unknown external: arg'))
                     _tmp = FluentNone('arg')
                 else:
-                    _tmp = handle_argument(_tmp, 'arg', locale, errors)
+                    _tmp = handle_argument_null_escaper(_tmp, 'arg', locale, errors)
 
-                return (''.join(['Foo \\u2068', handle_output(_tmp, locale, errors), '\\u2069 Bar']), errors)
+                return (''.join(['Foo \\u2068', handle_output_null_escaper(_tmp, locale, errors), '\\u2069 Bar']), errors)
         """)
         self.assertEqual(errs, [])
 
@@ -599,6 +599,7 @@ class TestCompiler(CompilerTestMixin, unittest.TestCase):
 
 html_escaper = make_namespace(
     select=lambda message_id=None, **hints: message_id.endswith('-html'),
+    output_type=Markup,
     mark_escaped=Markup,
     escape=escape,
     string_join=lambda parts: Markup('').join(parts),
@@ -625,7 +626,7 @@ class TestCompilerEscaping(CompilerTestMixin, unittest.TestCase):
                     errors.append(FluentReferenceError('Unknown external: arg'))
                     _tmp = FluentNone('arg')
                 else:
-                    _tmp = handle_argument(_tmp, 'arg', locale, errors)
+                    _tmp = handle_argument(_tmp, 'arg', escaper_0__output_type, locale, errors)
 
-                return (escaper_0__escape(handle_output(_tmp, locale, errors)), errors)
+                return (handle_output(_tmp, escaper_0__output_type, escaper_0__escape, locale, errors), errors)
         """)
