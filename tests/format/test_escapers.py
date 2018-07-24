@@ -41,7 +41,9 @@ class HtmlEscaper(object):
 
 # A very basic Markdown 'escaper'. The main point of this implementation is
 # that, unlike HtmlEscaper above, the output type is not a subclass of
-# str/unicode, in order to test the implementation handles this properly
+# str/unicode, in order to test the implementation handles this properly.
+
+# We also test whether the implementation can handle subclasses
 class Markdown(object):
     def __init__(self, text):
         if isinstance(text, Markdown):
@@ -60,8 +62,17 @@ class Markdown(object):
         return 'Markdown({0})'.format(repr(self.text))
 
 
-def strip_markdown(text):
-    return Markdown(BeautifulSoup(markdown(text), "html.parser").get_text())
+class LiteralMarkdown(Markdown):
+    pass
+
+
+class StrippedMarkdown(Markdown):
+    def __init__(self, text):
+        if isinstance(text, StrippedMarkdown):
+            self.text = text.text
+        else:
+            super(StrippedMarkdown, self).__init__(text)
+            self.text = BeautifulSoup(markdown(self.text), "html.parser").get_text()
 
 
 empty_markdown = Markdown('')
@@ -80,17 +91,17 @@ class MarkdownEscaper(object):
 
     def mark_escaped(self, escaped):
         self.test_case.assertEqual(type(escaped), six.text_type)
-        return Markdown(escaped)
+        return LiteralMarkdown(escaped)
 
     def escape(self, unescaped):
         # We don't do escaping, just stripping
         if isinstance(unescaped, Markdown):
             return unescaped
-        return strip_markdown(unescaped)
+        return StrippedMarkdown(unescaped)
 
     def join(self, parts):
         for p in parts:
-            self.test_case.assertEqual(type(p), Markdown)
+            self.test_case.assertTrue(isinstance(p, Markdown))
         return reduce(operator.add, parts, empty_markdown)
 
 
@@ -327,14 +338,10 @@ class TestMarkdownEscaping(unittest.TestCase):
             references-plain-variant-md = { -brand-plain[short] } is awesome
         """))
 
-    def assertTypeAndValueEqual(self, val1, val2):
-        self.assertEqual(val1, val2)
-        self.assertEqual(type(val1), type(val2))
-
     def test_strip_markdown(self):
-        self.assertEqual(strip_markdown('**Some bolded** and __italic__ text'),
+        self.assertEqual(StrippedMarkdown('**Some bolded** and __italic__ text'),
                          Markdown('Some bolded and italic text'))
-        self.assertEqual(strip_markdown("""
+        self.assertEqual(StrippedMarkdown("""
 
 > A quotation
 > about something
@@ -343,93 +350,93 @@ class TestMarkdownEscaping(unittest.TestCase):
 
     def test_select_false(self):
         val, errs = self.ctx.format('not-md-message')
-        self.assertTypeAndValueEqual(val, '**some text**')
+        self.assertEqual(val, '**some text**')
 
     def test_simple(self):
         val, errs = self.ctx.format('simple-md')
-        self.assertTypeAndValueEqual(val, Markdown('This is **great**'))
+        self.assertEqual(val, Markdown('This is **great**'))
         self.assertEqual(errs, [])
 
     def test_argument_is_escaped(self):
         val, errs = self.ctx.format('argument-md', {'arg': '**Jack**'})
-        self.assertTypeAndValueEqual(val, Markdown('This **thing** is called \u2068Jack\u2069.'))
+        self.assertEqual(val, Markdown('This **thing** is called \u2068Jack\u2069.'))
         self.assertEqual(errs, [])
 
     def test_argument_already_escaped(self):
         val, errs = self.ctx.format('argument-md', {'arg': Markdown('**Jack**')})
-        self.assertTypeAndValueEqual(val, Markdown('This **thing** is called \u2068**Jack**\u2069.'))
+        self.assertEqual(val, Markdown('This **thing** is called \u2068**Jack**\u2069.'))
         self.assertEqual(errs, [])
 
     def test_included_md(self):
         val, errs = self.ctx.format('term-md-ref-md')
-        self.assertTypeAndValueEqual(val, Markdown('\u2068**Jack** & __Jill__\u2069 are **great!**'))
+        self.assertEqual(val, Markdown('\u2068**Jack** & __Jill__\u2069 are **great!**'))
         self.assertEqual(errs, [])
 
     def test_included_plain(self):
         val, errs = self.ctx.format('term-plain-ref-md')
-        self.assertTypeAndValueEqual(val, Markdown('\u2068Jack & Jill\u2069 are **great!**'))
+        self.assertEqual(val, Markdown('\u2068Jack & Jill\u2069 are **great!**'))
         self.assertEqual(errs, [])
 
     def test_compound_message(self):
         val, errs = self.ctx.format('compound-message-md', {'arg': '**Jack & Jill**'})
-        self.assertTypeAndValueEqual(val, Markdown('A message about \u2068Jack & Jill\u2069. '
-                                                   '\u2068This **thing** is called \u2068Jack & Jill\u2069.\u2069'))
+        self.assertEqual(val, Markdown('A message about \u2068Jack & Jill\u2069. '
+                                       '\u2068This **thing** is called \u2068Jack & Jill\u2069.\u2069'))
         self.assertEqual(errs, [])
 
     def test_function(self):
         val, errs = self.ctx.format('function-md', {'text': 'Jack & Jill'})
-        self.assertTypeAndValueEqual(val, Markdown('You said: \u2068\n> Jack & Jill\u2069'))
+        self.assertEqual(val, Markdown('You said: \u2068\n> Jack & Jill\u2069'))
         self.assertEqual(errs, [])
 
     def test_plain_parent(self):
         val, errs = self.ctx.format('parent-plain')
-        self.assertTypeAndValueEqual(val, 'Some stuff')
+        self.assertEqual(val, 'Some stuff')
         self.assertEqual(errs, [])
 
     def test_md_attribute(self):
         val, errs = self.ctx.format('parent-plain.attr-md')
-        self.assertTypeAndValueEqual(val, Markdown("Some **Markdown** stuff"))
+        self.assertEqual(val, Markdown("Some **Markdown** stuff"))
         self.assertEqual(errs, [])
 
     def test_md_message_reference_from_plain(self):
         val, errs = self.ctx.format('references-md-message-plain')
-        self.assertTypeAndValueEqual(val, "Plain. \u2068simple-md\u2069")
+        self.assertEqual(val, "Plain. \u2068simple-md\u2069")
         self.assertEqual(len(errs), 1)
         self.assertEqual(type(errs[0]), TypeError)
 
     def test_md_attr_reference_from_plain(self):
         val, errs = self.ctx.format('references-md-attr-plain')
-        self.assertTypeAndValueEqual(val, "Plain. \u2068parent-plain.attr-md\u2069")
+        self.assertEqual(val, "Plain. \u2068parent-plain.attr-md\u2069")
         self.assertEqual(len(errs), 1)
         self.assertEqual(type(errs[0]), TypeError)
 
     def test_md_reference_from_md(self):
         val, errs = self.ctx.format('references-md-attr-md')
-        self.assertTypeAndValueEqual(val, Markdown("**Markdown**. \u2068Some **Markdown** stuff\u2069"))
+        self.assertEqual(val, Markdown("**Markdown**. \u2068Some **Markdown** stuff\u2069"))
         self.assertEqual(errs, [])
 
     def test_plain_reference_from_md(self):
         val, errs = self.ctx.format('references-plain-attr-md')
-        self.assertTypeAndValueEqual(val, Markdown("**Markdown**. \u2068This and That\u2069"))
+        self.assertEqual(val, Markdown("**Markdown**. \u2068This and That\u2069"))
         self.assertEqual(errs, [])
 
     def test_md_variant_from_plain(self):
         val, errs = self.ctx.format('references-md-variant-plain')
-        self.assertTypeAndValueEqual(val, "\u2068-brand-md\u2069 is cool")
+        self.assertEqual(val, "\u2068-brand-md\u2069 is cool")
         self.assertEqual(len(errs), 1)
         self.assertEqual(type(errs[0]), TypeError)
 
     def test_md_variant_from_md(self):
         val, errs = self.ctx.format('references-md-variant-md')
-        self.assertTypeAndValueEqual(val, Markdown("\u2068CoolBrand **2**\u2069 is cool"))
+        self.assertEqual(val, Markdown("\u2068CoolBrand **2**\u2069 is cool"))
         self.assertEqual(errs, [])
 
     def test_plain_variant_from_plain(self):
         val, errs = self.ctx.format('references-plain-variant-plain')
-        self.assertTypeAndValueEqual(val, "\u2068*A&B*\u2069 is awesome")
+        self.assertEqual(val, "\u2068*A&B*\u2069 is awesome")
         self.assertEqual(errs, [])
 
     def test_plain_variant_from_md(self):
         val, errs = self.ctx.format('references-plain-variant-md')
-        self.assertTypeAndValueEqual(val, Markdown("\u2068A&B\u2069 is awesome"))
+        self.assertEqual(val, Markdown("\u2068A&B\u2069 is awesome"))
         self.assertEqual(errs, [])
