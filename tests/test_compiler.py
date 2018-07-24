@@ -601,7 +601,8 @@ html_escaper = make_namespace(
     select=lambda message_id=None, **hints: message_id.endswith('-html'),
     mark_escaped=Markup,
     escape=escape,
-    string_join=lambda parts: Markup('').join(parts)
+    string_join=lambda parts: Markup('').join(parts),
+    name='html_escaper',
 )
 
 

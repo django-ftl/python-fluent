@@ -11,6 +11,8 @@ from ..syntax import dedent_ftl
 
 class HtmlEscaper(object):
 
+    name = 'HtmlEscaper'
+
     def __init__(self, test_case):
         self.test_case = test_case
 

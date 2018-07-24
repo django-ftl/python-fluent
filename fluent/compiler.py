@@ -542,7 +542,7 @@ def do_message_call(message_id, local_scope, parent_expr, compiler_env):
                                           message_id)
         if not escapers_compatible(current_escaper, new_escaper):
             error = TypeError("Escaper {0} for message {1} cannot be used from calling context with {2} escaper"
-                              .format(new_escaper, message_id, current_escaper))
+                              .format(new_escaper, message_id, current_escaper.name))
             add_static_msg_error(local_scope, error)
             compiler_env.add_current_message_error(error)
             return make_fluent_none(message_id, local_scope)
