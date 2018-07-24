@@ -630,3 +630,26 @@ class TestCompilerEscaping(CompilerTestMixin, unittest.TestCase):
 
                 return (handle_output(_tmp, escaper_0__output_type, escaper_0__escape, locale, errors), errors)
         """)
+
+    def test_single_text_element(self):
+        code, errs = self.compile_messages("""
+            foo-html = <b>Some HTML</b>
+        """)
+        self.assertCodeEqual(code, """
+            def foo_html(message_args, errors):
+                return (escaper_0__mark_escaped('<b>Some HTML</b>'), errors)
+        """)
+
+    def test_reference_to_same_escaper(self):
+        # Test we eliminate the unnecessary escaper_0__escape call in the calling code
+        code, errs = self.compile_messages("""
+            foo-html = <b>Some HTML</b>
+            bar-html = { foo-html }
+        """)
+        self.assertCodeEqual(code, """
+            def foo_html(message_args, errors):
+                return (escaper_0__mark_escaped('<b>Some HTML</b>'), errors)
+
+            def bar_html(message_args, errors):
+                return foo_html(message_args, errors)
+        """)

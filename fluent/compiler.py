@@ -557,9 +557,8 @@ def do_message_call(message_id, local_scope, parent_expr, compiler_env):
             return make_fluent_none(message_id, local_scope)
 
         else:
-            # Message functions always return strings, so we can type this variable:
-            # TODO - correct return types for cases involving escapers
-            tmp_name = local_scope.reserve_name('_tmp', properties={codegen.PROPERTY_TYPE: text_type})
+            # Message functions always return strings (or escaper.output_type), so we can type this variable:
+            tmp_name = local_scope.reserve_name('_tmp', properties={codegen.PROPERTY_TYPE: new_escaper.output_type})
             msg_func_name = compiler_env.message_mapping[message_id]
             # > $tmp_name = $msg_func_name(message_args, errors)
             local_scope.add_assignment(
@@ -870,7 +869,8 @@ def finalize_expr_as_output_type(python_expr, scope, compiler_env):
                                          codegen.VariableReference(LOCALE_NAME, scope),
                                          codegen.VariableReference(ERRORS_NAME, scope)],
                                         {},
-                                        scope)
+                                        scope,
+                                        expr_type=escaper.output_type)
         else:
             # > handle_output_escaper($python_expr, locale, errors)
             return codegen.FunctionCall('handle_output',
@@ -894,6 +894,8 @@ def wrap_with_escaper(python_expr, scope, compiler_env):
                                   message_id)
     if escaper.escape is identity:
         return python_expr
+    if escaper.output_type is python_expr.type:
+        return python_expr
     return codegen.FunctionCall(escaper_escape_name(escaper, compiler_env),
                                 [python_expr],
                                 {},
@@ -907,10 +909,13 @@ def wrap_with_mark_escaped(python_expr, scope, compiler_env):
                                   message_id)
     if escaper.mark_escaped is identity:
         return python_expr
+    if escaper.output_type is python_expr.type:
+        return python_expr
     return codegen.FunctionCall(escaper_mark_escaped_name(escaper, compiler_env),
                                 [python_expr],
                                 {},
-                                scope)
+                                scope,
+                                expr_type=escaper.output_type)
 
 
 def is_NUMBER_call_expr(expr):
