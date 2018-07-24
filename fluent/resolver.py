@@ -122,7 +122,7 @@ def handle_term(term, env):
 
 
 @handle.register(Attribute)
-def handle_message(attribute, env):
+def handle_attribute(attribute, env):
     return handle(attribute.value, env)
 
 
