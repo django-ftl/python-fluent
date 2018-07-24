@@ -199,11 +199,11 @@ def messages_to_module(messages, locale, use_isolating=True, functions=None,
     # Reserve names for escapers
     for escaper in escapers:
         # Need to reserve names for:
-        # escaper.output_type, escaper.mark_escaped, escaper.escape, escaper.string_join
+        # escaper.output_type, escaper.mark_escaped, escaper.escape, escaper.join
         for attr_name, namer in [("output_type", escaper_output_type_name),
                                  ("mark_escaped", escaper_mark_escaped_name),
                                  ("escape", escaper_escape_name),
-                                 ("string_join", escaper_string_join_name),
+                                 ("join", escaper_join_name),
                                  ]:
             name = namer(escaper, compiler_env)
             assigned_name = module.reserve_name(name)
@@ -284,8 +284,8 @@ def escaper_escape_name(escaper, compiler_env):
     return "{0}_escape".format(escaper_prefix(escaper, compiler_env))
 
 
-def escaper_string_join_name(escaper, compiler_env):
-    return "{0}_string_join".format(escaper_prefix(escaper, compiler_env))
+def escaper_join_name(escaper, compiler_env):
+    return "{0}_join".format(escaper_prefix(escaper, compiler_env))
 
 
 def message_id_for_attr_expression(attr_expr):
@@ -468,13 +468,14 @@ def compile_expr_pattern(pattern, local_scope, parent_expr, compiler_env):
         if wrap_this_with_isolating:
             parts.append(wrap_with_escaper(codegen.String(PDI), local_scope, compiler_env))
 
-    if escaper.string_join is not null_escaper.string_join:
-        custom_joiner_name = escaper_string_join_name(escaper, compiler_env)
+    if escaper.join is not null_escaper.join:
+        custom_join_name = escaper_join_name(escaper, compiler_env)
     else:
-        custom_joiner_name = None
+        custom_join_name = None
     # > ''.join($[p for p in parts])
-    return codegen.StringJoin([finalize_expr_as_output_type(p, local_scope, compiler_env) for p in parts],
-                              custom_joiner_name=custom_joiner_name)
+    return codegen.Join([finalize_expr_as_output_type(p, local_scope, compiler_env) for p in parts],
+                        escaper.output_type,
+                        custom_join_name=custom_join_name)
 
 
 @compile_expr.register(TextElement)

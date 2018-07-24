@@ -419,19 +419,18 @@ class List(Expression):
         return self
 
 
-class StringJoin(Expression):
-    type = text_type  # TODO - update for escapers
-
-    def __init__(self, parts, custom_joiner_name=None):
+class Join(Expression):
+    def __init__(self, parts, output_type, custom_join_name=None):
         self.parts = parts
-        self.custom_joiner_name = custom_joiner_name
+        self.type = output_type
+        self.custom_join_name = custom_join_name
 
     def as_source_code(self):
-        if self.custom_joiner_name is None:
-            joiner = "''.join"
+        if self.custom_join_name is None:
+            join = "''.join"
         else:
-            joiner = self.custom_joiner_name
-        return "{0}({1})".format(joiner, List(self.parts).as_source_code())
+            join = self.custom_join_name
+        return "{0}({1})".format(join, List(self.parts).as_source_code())
 
     def simplify(self, changes):
         # Simplify sub parts
@@ -451,8 +450,8 @@ class StringJoin(Expression):
             changes.append(True)
         self.parts = new_parts
 
-        # See if we eliminate the StringJoin altogether
-        if len(self.parts) == 0:
+        # See if we can eliminate the Join altogether
+        if len(self.parts) == 0 and self.type is text_type:
             changes.append(True)
             return String('')
         elif len(self.parts) == 1:

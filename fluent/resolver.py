@@ -176,7 +176,7 @@ def handle_pattern(pattern, env):
         parts.append(part)
         if use_isolating:
             parts.append(escaper.escape(PDI))
-    retval = escaper.string_join(parts)
+    retval = escaper.join(parts)
     env.dirty.remove(pattern)
     return retval
 

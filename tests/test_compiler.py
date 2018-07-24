@@ -597,12 +597,14 @@ class TestCompiler(CompilerTestMixin, unittest.TestCase):
                                 ])
 
 
+empty_markup = Markup('')
+
 html_escaper = make_namespace(
     select=lambda message_id=None, **hints: message_id.endswith('-html'),
     output_type=Markup,
     mark_escaped=Markup,
     escape=escape,
-    string_join=lambda parts: Markup('').join(parts),
+    join=empty_markup.join,
     name='html_escaper',
     use_isolating=False,
 )

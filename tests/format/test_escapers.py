@@ -33,7 +33,7 @@ class HtmlEscaper(object):
     def escape(self, unescaped):
         return escape(unescaped)
 
-    def string_join(self, parts):
+    def join(self, parts):
         for p in parts:
             self.test_case.assertEqual(type(p), Markup)
         return Markup('').join(parts)
@@ -88,7 +88,7 @@ class MarkdownEscaper(object):
             return unescaped
         return strip_markdown(unescaped)
 
-    def string_join(self, parts):
+    def join(self, parts):
         for p in parts:
             self.test_case.assertEqual(type(p), Markdown)
         return reduce(operator.add, parts, empty_markdown)

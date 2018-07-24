@@ -15,7 +15,7 @@ def identity(value):
 
 
 # Default string join function and sentinel value
-default_string_join = ''.join
+default_join = ''.join
 
 
 def select_always(message_id=None, **kwargs):
@@ -27,7 +27,7 @@ null_escaper = make_namespace(
     output_type=six.text_type,
     escape=identity,
     mark_escaped=identity,
-    string_join=default_string_join,
+    join=default_join,
     use_isolating=None,
     name='null_escaper',
 )

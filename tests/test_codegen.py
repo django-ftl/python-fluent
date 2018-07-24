@@ -5,7 +5,12 @@ from __future__ import absolute_import, unicode_literals
 import textwrap
 import unittest
 
+import six
+
 from fluent import codegen
+
+
+text_type = six.text_type
 
 
 def normalize_python(text):
@@ -286,33 +291,33 @@ class TestCodeGen(unittest.TestCase):
             return 3
         """)
 
-    def test_string_join_empty(self):
-        join = codegen.StringJoin([])
+    def test_join_empty(self):
+        join = codegen.Join([], text_type)
         join = codegen.simplify(join)
         self.assertCodeEqual(join.as_source_code(), "''")
 
-    def test_string_join_one(self):
-        join = codegen.StringJoin([codegen.String('hello')])
+    def test_join_one(self):
+        join = codegen.Join([codegen.String('hello')], text_type)
         join = codegen.simplify(join)
         self.assertCodeEqual(join.as_source_code(), "'hello'")
 
-    def test_string_join_two(self):
+    def test_join_two(self):
         scope = codegen.Scope()
         scope.reserve_name('tmp')
         var = codegen.VariableReference('tmp', scope)
-        join = codegen.StringJoin([codegen.String('hello '), var])
+        join = codegen.Join([codegen.String('hello '), var], text_type)
         self.assertCodeEqual(join.as_source_code(), "''.join(['hello ', tmp])")
 
-    def test_string_join_collapse_strings(self):
+    def test_join_collapse_strings(self):
         scope = codegen.Scope()
         scope.reserve_name('tmp')
         var = codegen.VariableReference('tmp', scope)
-        join1 = codegen.StringJoin([codegen.String('hello '),
-                                    codegen.String('there '),
-                                    var,
-                                    codegen.String(' how'),
-                                    codegen.String(' are you?'),
-                                    ])
+        join1 = codegen.Join([codegen.String('hello '),
+                              codegen.String('there '),
+                              var,
+                              codegen.String(' how'),
+                              codegen.String(' are you?'),
+                              ], text_type)
         join1 = codegen.simplify(join1)
         self.assertCodeEqual(join1.as_source_code(), "''.join(['hello there ', tmp, ' how are you?'])")
 
