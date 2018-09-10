@@ -61,6 +61,7 @@ class CurrentEnvironment(object):
     # The parts of CompilerEnvironment that we want to mutate (and restore)
     # temporarily for some parts of a call chain.
     message_id = attr.ib(default=None)
+    escaper = attr.ib(default=None)
 
 
 @attr.s
@@ -236,7 +237,8 @@ def messages_to_module(messages, locale, use_isolating=True, functions=None,
 
     # Pass 2, actual compilation
     for msg_id, msg in message_ids_to_ast.items():
-        with compiler_env.modified(message_id=msg_id):
+        with compiler_env.modified(message_id=msg_id,
+                                   escaper=escaper_for_message(compiler_env.escapers, msg_id)):
             function_name = compiler_env.message_mapping[msg_id]
             function = compile_message(msg, msg_id, function_name, module, compiler_env)
             module.add_function(function_name, function)
@@ -452,9 +454,7 @@ def compile_expr_pattern(pattern, local_scope, parent_expr, compiler_env):
     parts = []
     subelements = pattern.elements
 
-    escaper = escaper_for_message(compiler_env.escapers,
-                                  compiler_env.current.message_id)
-
+    escaper = compiler_env.current.escaper
     use_isolating = ((escaper.use_isolating
                       if escaper.use_isolating is not None
                       else compiler_env.use_isolating) and
@@ -522,8 +522,7 @@ def compile_expr_term_reference(reference, local_scope, parent_expr, compiler_en
     name = reference.id.name
     if name in compiler_env.term_ids_to_ast:
         term = compiler_env.term_ids_to_ast[name]
-        current_escaper = escaper_for_message(compiler_env.escapers,
-                                              compiler_env.current.message_id)
+        current_escaper = compiler_env.current.escaper
         new_escaper = escaper_for_message(compiler_env.escapers,
                                           name)
         if not escapers_compatible(current_escaper, new_escaper):
@@ -533,7 +532,7 @@ def compile_expr_term_reference(reference, local_scope, parent_expr, compiler_en
             compiler_env.add_current_message_error(error)
             return make_fluent_none(name, local_scope)
         else:
-            with compiler_env.modified(message_id=name):
+            with compiler_env.modified(escaper=new_escaper):
                 value = compile_expr(term.value, local_scope, reference, compiler_env)
             return wrap_with_escaper(value, local_scope, compiler_env)
 
@@ -546,8 +545,7 @@ def compile_expr_term_reference(reference, local_scope, parent_expr, compiler_en
 
 def do_message_call(message_id, local_scope, parent_expr, compiler_env):
     if message_id in compiler_env.message_mapping:
-        current_escaper = escaper_for_message(compiler_env.escapers,
-                                              compiler_env.current.message_id)
+        current_escaper = compiler_env.current.escaper
         new_escaper = escaper_for_message(compiler_env.escapers,
                                           message_id)
         if not escapers_compatible(current_escaper, new_escaper):
@@ -732,8 +730,7 @@ def compile_expr_variant_expression(variant_expr, local_scope, parent_expr, comp
     if term_id in compiler_env.term_ids_to_ast:
         term_val = compiler_env.term_ids_to_ast[term_id].value
         if isinstance(term_val, VariantList):
-            current_escaper = escaper_for_message(compiler_env.escapers,
-                                                  compiler_env.current.message_id)
+            current_escaper = compiler_env.current.escaper
             new_escaper = escaper_for_message(compiler_env.escapers,
                                               term_id)
             if not escapers_compatible(current_escaper, new_escaper):
@@ -743,7 +740,7 @@ def compile_expr_variant_expression(variant_expr, local_scope, parent_expr, comp
                 compiler_env.add_current_message_error(error)
                 return make_fluent_none(term_id, local_scope)
             else:
-                with compiler_env.modified(message_id=term_id):
+                with compiler_env.modified(escaper=new_escaper):
                     value = compile_expr_variant_list(term_val, local_scope, variant_expr, compiler_env,
                                                       selected_key=variant_expr.key,
                                                       term_id=term_id)
@@ -789,8 +786,7 @@ def compile_expr_external_argument(argument, local_scope, parent_expr, compiler_
         # > $tmp_name = handle_argument($tmp_name, "$name", output_type, locale, errors)
         # or
         # >  $tmp_name = handle_argument_null_escaper($tmp_name, "$name", locale, errors)
-        escaper = escaper_for_message(compiler_env.escapers,
-                                      compiler_env.current.message_id)
+        escaper = compiler_env.current.escaper
         if escaper is null_escaper:
             handle_arg_expr = codegen.FunctionCall(
                 "handle_argument_null_escaper",
@@ -845,9 +841,7 @@ def finalize_expr_as_output_type(python_expr, scope, compiler_env):
     Wrap an outputted Python expression with code to ensure that it will return
     a string.
     """
-    escaper = escaper_for_message(compiler_env.escapers,
-                                  compiler_env.current.message_id)
-
+    escaper = compiler_env.current.escaper
     if python_expr.type is escaper.output_type:
         return python_expr
 
@@ -890,9 +884,7 @@ def finalize_expr_as_output_type(python_expr, scope, compiler_env):
 
 
 def wrap_with_escaper(python_expr, scope, compiler_env):
-    message_id = compiler_env.current.message_id
-    escaper = escaper_for_message(compiler_env.escapers,
-                                  message_id)
+    escaper = compiler_env.current.escaper
     if escaper.escape is identity:
         return python_expr
     if escaper.output_type is python_expr.type:
@@ -905,9 +897,7 @@ def wrap_with_escaper(python_expr, scope, compiler_env):
 
 
 def wrap_with_mark_escaped(python_expr, scope, compiler_env):
-    message_id = compiler_env.current.message_id
-    escaper = escaper_for_message(compiler_env.escapers,
-                                  message_id)
+    escaper = compiler_env.current.escaper
     if escaper.mark_escaped is identity:
         return python_expr
     if escaper.output_type is python_expr.type:
