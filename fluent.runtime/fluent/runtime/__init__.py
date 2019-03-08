@@ -15,6 +15,7 @@ from .errors import FluentDuplicateMessageId, FluentJunkFound
 from .prepare import Compiler
 from .resolver import CurrentEnvironment, ResolverEnvironment
 from .utils import ATTRIBUTE_SEPARATOR, TERM_SIGIL, ast_to_id, native_to_fluent
+from .escapers import escaper_for_message
 
 
 class FluentBundleBase(object):
@@ -87,8 +88,10 @@ class FluentBundleBase(object):
 
 class InterpretingFluentBundle(FluentBundleBase):
 
-    def __init__(self, locales, functions=None, use_isolating=True):
-        super(InterpretingFluentBundle, self).__init__(locales, functions=functions, use_isolating=use_isolating)
+    def __init__(self, locales, functions=None, use_isolating=True, escapers=None):
+        super(InterpretingFluentBundle, self).__init__(locales, functions=functions,
+                                                       use_isolating=use_isolating,
+                                                       escapers=escapers)
         self._compiled = {}
         self._compiler = Compiler(use_isolating=use_isolating)
 
@@ -117,7 +120,11 @@ class InterpretingFluentBundle(FluentBundleBase):
         errors = []
         resolve = self.lookup(message_id)
         env = ResolverEnvironment(context=self,
-                                  current=CurrentEnvironment(args=fluent_args),
+                                  current=CurrentEnvironment(
+                                      args=fluent_args,
+                                      escaper=escaper_for_message(self._escapers, message_id=message_id),
+                                  ),
+                                  escapers=self._escapers,
                                   errors=errors)
         return [resolve(env), errors]
 

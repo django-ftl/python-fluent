@@ -4,10 +4,10 @@ import contextlib
 
 import attr
 import six
-
 from fluent.syntax import ast as FTL
 
 from .errors import FluentCyclicReferenceError, FluentFormatError, FluentReferenceError
+from .escapers import EscaperJoin, RegisteredEscaper, escaper_for_message, escapers_compatible, identity, null_escaper
 from .types import FluentFloat, FluentInt, FluentNone, FluentType
 from .utils import args_match, inspect_function_args, reference_to_id, unknown_reference_error_obj
 
@@ -45,6 +45,7 @@ class CurrentEnvironment(object):
     # This controls whether we need to report an error if a VariableReference
     # refers to an arg that is not present in the args dict.
     error_for_missing_arg = attr.ib(default=True)
+    escaper = attr.ib(default=null_escaper)
 
 
 @attr.s
@@ -52,6 +53,7 @@ class ResolverEnvironment(object):
     context = attr.ib()
     errors = attr.ib()
     part_count = attr.ib(default=0)
+    escapers = attr.ib(default=None)
     current = attr.ib(factory=CurrentEnvironment)
 
     @contextlib.contextmanager
